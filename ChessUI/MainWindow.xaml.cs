@@ -9,6 +9,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
 using ChessLogic;
+using ChessLogic.Enums;
 
 namespace ChessUI
 {
@@ -21,18 +22,19 @@ namespace ChessUI
         private readonly Rectangle[,] highlights = new Rectangle[8, 8];
         private readonly Dictionary<Position, Move> moveCache = new Dictionary<Position, Move>();
 
-
         private GameState gameState;
         private Position selectedPos = null;
+        private GameMode? gameMode = null;
+        private AILevel? botDifficulty = null;
+        private IChessBot bot = null;
+        private bool isBotThinking = false;
+        private bool gameStarted = false;
 
         public MainWindow()
         {
             InitializeComponent();
             InitializeBoard();
-
-            gameState = new GameState(Player.White, Board.Initial());
-            DrawBoard(gameState.Board);
-            SetCursor(gameState.CurrentPlayer);
+            ShowStartMenu();
         }
 
         private void InitializeBoard()
@@ -52,6 +54,55 @@ namespace ChessUI
             }
         }
 
+        private void ShowStartMenu()
+        {
+            StartMenu startMenu = new StartMenu();
+            MenuContainer.Content = startMenu;
+
+            startMenu.GameModeSelected += mode =>
+            {
+                gameMode = mode;
+
+                if (mode == GameMode.HumanVsBot)
+                {
+                    ShowDifficultyMenu();
+                }
+                else
+                {
+                    StartGame();
+                }
+            };
+        }
+
+        private void ShowDifficultyMenu()
+        {
+            DifficultyMenu difficultyMenu = new DifficultyMenu();
+            MenuContainer.Content = difficultyMenu;
+
+            difficultyMenu.DifficultySelected += difficulty =>
+            {
+                botDifficulty = difficulty;
+                StartGame();
+            };
+        }
+
+        private void StartGame()
+        {
+            MenuContainer.Content = null;
+
+            if (gameMode == GameMode.HumanVsBot && botDifficulty.HasValue)
+            {
+                bot = BotCreation.CreateBot(botDifficulty.Value);
+            }
+
+            gameState = new GameState(Player.White, Board.Initial());
+            gameStarted = true;
+            DrawBoard(gameState.Board);
+            SetCursor(gameState.CurrentPlayer);
+
+            MakeBotMoveIfNeeded();
+        }
+
         private void DrawBoard(Board board)
         {
             for (int r = 0; r < 8; r++)
@@ -66,7 +117,13 @@ namespace ChessUI
 
         private void BoardGrid_MouseDown(object sender, MouseButtonEventArgs e)
         {
-            if (IsMenuOnScreen())
+            if (!gameStarted || IsMenuOnScreen() || isBotThinking)
+            {
+                return;
+            }
+
+            // Якщо грає бот, не дозволяємо робити ходи за чорних
+            if (gameMode == GameMode.HumanVsBot && gameState.CurrentPlayer == Player.Black)
             {
                 return;
             }
@@ -138,7 +195,7 @@ namespace ChessUI
             };
         }
 
-        private void HandleMove(Move move) 
+        private void HandleMove(Move move)
         {
             gameState.MakeMove(move);
             DrawBoard(gameState.Board);
@@ -147,6 +204,32 @@ namespace ChessUI
             if (gameState.IsGameOver())
             {
                 ShowGameOver();
+            }
+            else
+            {
+                MakeBotMoveIfNeeded();
+            }
+        }
+
+        private void MakeBotMoveIfNeeded()
+        {
+            if (gameMode == GameMode.HumanVsBot && gameState.CurrentPlayer == Player.Black && bot != null)
+            {
+                isBotThinking = true;
+
+                Task.Run(() =>
+                {
+                    Move botMove = bot.GetBestMove(gameState);
+
+                    Dispatcher.Invoke(() =>
+                    {
+                        if (botMove != null)
+                        {
+                            HandleMove(botMove);
+                        }
+                        isBotThinking = false;
+                    });
+                });
             }
         }
 
@@ -218,14 +301,16 @@ namespace ChessUI
             selectedPos = null;
             HideHighlights();
             moveCache.Clear();
-            gameState = new GameState(Player.White, Board.Initial());
-            DrawBoard(gameState.Board);
-            SetCursor(gameState.CurrentPlayer);
+            gameMode = null;
+            botDifficulty = null;
+            bot = null;
+            gameStarted = false;
+            ShowStartMenu();
         }
 
         private void Window_KeyDown(object sender, KeyEventArgs e)
         {
-            if (!IsMenuOnScreen() && e.Key == Key.Escape)
+            if (gameStarted && !IsMenuOnScreen() && e.Key == Key.Escape)
             {
                 ShowPauseMenu();
             }
